@@ -46,8 +46,9 @@ void AutomaticWarpSpecialization::runOnOperation() {
   pm.addPass(createNVWSLowerAref({numStages}));
   pm.addPass(createTritonGPUPartitionLoops());
   pm.addPass(createNVWSLowerWarpGroup());
-  pm.addPass(createTritonGPUOptimizePartitionWarps());
   pm.addPass(createTritonGPUScheduleLoops());
+  pm.addPass(createTritonGPUPipeline());
+  pm.addPass(createTritonGPUOptimizePartitionWarps());
   if (failed(runPipeline(pm, getOperation())))
     return signalPassFailure();
 }

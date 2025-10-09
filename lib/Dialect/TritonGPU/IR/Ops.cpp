@@ -335,12 +335,9 @@ struct CanonicalizeConvertFromConvert
       // We insert at the point of the original op as there could be ops with
       // memory side-effects between the LocalLoad op and the ConvertLayout op
       rewriter.setInsertionPoint(arg);
-      auto attrs = sharedLoad->getAttrs();
-      auto newOp = rewriter.replaceOpWithNewOp<LocalLoadOp>(op, op->getResult(0).getType(),
-							    sharedLoad.getSrc(),
-							    sharedLoad.getToken());
-      newOp->setAttrs(attrs);
-
+      rewriter.replaceOpWithNewOp<LocalLoadOp>(op, op->getResult(0).getType(),
+                                               sharedLoad.getSrc(),
+                                               sharedLoad.getToken());
       return success();
     }
 
