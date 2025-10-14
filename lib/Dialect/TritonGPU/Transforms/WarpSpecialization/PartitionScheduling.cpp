@@ -594,7 +594,7 @@ Flags getNodeFlags(Node *node) {
     if (isa<ttng::TMEMStoreOp>(op))
       return Flags::TMEM;
     // if (isa<math::Exp2Op>(op))
-    //   return Flags::SFU;
+    //  return Flags::SFU;
     if (isa<tt::BroadcastOp, tt::ExpandDimsOp>(op) ||
         op->hasTrait<OpTrait::MemDescViewTrait>())
       return Flags::VIEW;
@@ -1434,45 +1434,61 @@ DenseSet<Partition *> getReachablePartitions(Partition *partition) {
 SmallVector<
     std::pair<std::string, std::function<bool(Partition *, Partition *)>>>
     partition_heuristics = {
-        // merge load partitions that are consumed by the same partition
-        {"load_partitions_with_same_consumer",
+        // // merge load partitions that are consumed by the same partition
+        // {"load_partitions_with_same_consumer",
+        //  [](Partition *a, Partition *b) {
+        //    auto a_is_load = (a->getFlags() & Flags::LOAD &&
+        //                      !(a->getFlags() & Flags::MANUAL));
+        //    auto b_is_load = (b->getFlags() & Flags::LOAD &&
+        //                      !(b->getFlags() & Flags::MANUAL));
+        //    if (!a_is_load || !b_is_load)
+        //      return false;
+        //
+        //    auto a_consuming_partitions = getConsumingPartitions(a);
+        //    auto b_consuming_partitions = getConsumingPartitions(b);
+        //    for (auto ag : a_consuming_partitions)
+        //      for (auto bg : b_consuming_partitions)
+        //        if (ag == bg)
+        //          return true;
+        //    return false;
+        //  }},
+        //
+        // // vertically merge load partitions
+        // // partitions that are reachable from one another are merged into the
+        // // same partition
+        // {"load_partitions_vertical",
+        //  [](Partition *a, Partition *b) {
+        //    auto a_is_load = (a->getFlags() & Flags::LOAD &&
+        //                      !(a->getFlags() & Flags::MANUAL));
+        //    auto b_is_load = (b->getFlags() & Flags::LOAD &&
+        //                      !(b->getFlags() & Flags::MANUAL));
+        //    if (!a_is_load || !b_is_load)
+        //      return false;
+        //
+        //    return getReachablePartitions(a).contains(b);
+        //  }},
+
+        // merge mma partitions
+        {"mma_partitions_horizontal",
          [](Partition *a, Partition *b) {
-           auto a_is_load = (a->getFlags() & Flags::LOAD &&
-                             !(a->getFlags() & Flags::MANUAL));
-           auto b_is_load = (b->getFlags() & Flags::LOAD &&
-                             !(b->getFlags() & Flags::MANUAL));
-           if (!a_is_load || !b_is_load)
-             return false;
-
-           auto a_consuming_partitions = getConsumingPartitions(a);
-           auto b_consuming_partitions = getConsumingPartitions(b);
-           for (auto ag : a_consuming_partitions)
-             for (auto bg : b_consuming_partitions)
-               if (ag == bg)
-                 return true;
-           return false;
-         }},
-
-        // vertically merge load partitions
-        // partitions that are reachable from one another are merged into the
-        // same partition
-        {"load_partitions_vertical",
-         [](Partition *a, Partition *b) {
-           auto a_is_load = (a->getFlags() & Flags::LOAD &&
-                             !(a->getFlags() & Flags::MANUAL));
-           auto b_is_load = (b->getFlags() & Flags::LOAD &&
-                             !(b->getFlags() & Flags::MANUAL));
-           if (!a_is_load || !b_is_load)
-             return false;
-
-           return getReachablePartitions(a).contains(b);
+           auto a_is_mma = (a->getFlags() == Flags::MMA);
+           auto b_is_mma = (b->getFlags() == Flags::MMA);
+           return a_is_mma && b_is_mma;
          }},
 
         // merge store partitions
         {"store_partitions_horizontal",
          [](Partition *a, Partition *b) {
-           auto a_is_store = (a->getFlags() == Flags::STORE);
-           auto b_is_store = (b->getFlags() == Flags::STORE);
+           auto a_is_store = (a->getFlags() & Flags::STORE);
+           auto b_is_store = (b->getFlags() & Flags::STORE);
+           return a_is_store && b_is_store;
+         }},
+
+        // merge load partitions
+        {"store_partitions_horizontal",
+         [](Partition *a, Partition *b) {
+           auto a_is_store = (a->getFlags() == Flags::LOAD);
+           auto b_is_store = (b->getFlags() == Flags::LOAD);
            return a_is_store && b_is_store;
          }},
 
