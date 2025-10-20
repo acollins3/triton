@@ -2285,15 +2285,15 @@ void assignPartitionIds(Graph *graph) {
       partition->id = idx;
       idx++;
     }
+    for (auto partition : store_partitions) {
+      partition->id = idx;
+      idx++;
+    }
     for (auto partition : mma_partitions) {
       partition->id = idx;
       idx++;
     }
     for (auto partition : load_partitions) {
-      partition->id = idx;
-      idx++;
-    }
-    for (auto partition : store_partitions) {
       partition->id = idx;
       idx++;
     }
