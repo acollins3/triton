@@ -585,7 +585,7 @@ Flags getNodeFlags(Node *node) {
     if (isa<tt::DescriptorLoadOp>(op) || isAsyncLoad(node))
       return Flags::LOAD;
     if (!options.disable_epilogue &&
-        isa<tt::StoreOp, tt::DescriptorStoreOp>(op))
+        isa</*tt::StoreOp,*/ tt::DescriptorStoreOp>(op))
       return Flags::STORE;
     if (isa<ttng::MMAv5OpInterface>(op))
       return Flags::MMA;
@@ -1052,14 +1052,37 @@ SmallVector<std::pair<std::string, std::function<bool(Edge)>>> heuristics = {
      [](Edge edge) { return getNodeFlags(edge.getFromNode()) & Flags::VIEW; }},
 
     // for op iter arg placed in same partition as op that produces
-    // its value in the loop body
+    // its value in the loop body (if it is not a token)
     {"for_op_iter_arg",
      [](Edge edge) {
        auto from = edge.getFromNode();
        auto to = edge.getToNode();
-       if (!isForIterArg(to))
+       if (from->getParent() != to->getParent())
+         // skip if not both in the loop body
          return false;
-       if (edge.getToIdx() != 1)
+       if (!isForIterArg(to))
+         // skip is not to an iter arg
+         return false;
+       if (isa<AsyncTokenType>(to->getValue().getType()))
+         // skip if a token type
+         return false;
+       return true;
+     }},
+
+    // for op iter arg placed in same partition as op that consumes
+    // its value in the loop body (if it is a token)
+    {"for_op_iter_arg_token",
+     [](Edge edge) {
+       auto from = edge.getFromNode();
+       auto to = edge.getToNode();
+       if (from->getParent() != to->getParent())
+         // skip if not both in the loop body
+         return false;
+       if (!isForIterArg(from))
+         // skip if not from an iter arg
+         return false;
+       if (!isa<AsyncTokenType>(from->getValue().getType()))
+         // skip if not a token
          return false;
        return true;
      }},
@@ -1109,14 +1132,6 @@ SmallVector<std::pair<std::string, std::function<bool(Edge)>>> heuristics = {
               (isNone(from) || isSIMT(from) || isTMEM(from)) && isStore(to);
      }},
 
-    // merge connected TMEM partitions together
-    {"connected_tmem",
-     [](Edge edge) {
-       auto from = edge.getFromNode();
-       auto to = edge.getToNode();
-       return isTMEM(from) && isTMEM(to);
-     }},
-
     // merge connected STORE partitions together
     {"connected_store",
      [](Edge edge) {
@@ -1133,13 +1148,12 @@ SmallVector<std::pair<std::string, std::function<bool(Edge)>>> heuristics = {
        return isMMA(from) && isMMA(to);
      }},
 
-    // NONE ops following TMEM/SIMT merged together
+    // NONE ops following TMEM/SIMT/STORE merged together
     {"none_following",
      [](Edge edge) {
        auto from = edge.getFromNode();
        auto to = edge.getToNode();
-       return from->isOp() && to->isOp() && (isTMEM(from) || isSIMT(from)) &&
-              isNone(to);
+       return (isTMEM(from) || isSIMT(from) || isStore(from)) && isNone(to);
      }},
 
     // // merge SIMT partition into following partition, if the SIMT ops
@@ -1431,9 +1445,56 @@ DenseSet<Partition *> getReachablePartitions(Partition *partition) {
   return partitions;
 }
 
+DenseSet<Operation *> getTMEMAllocs(Partition *partition) {
+  // look for all tmem allocs used by the partition
+  DenseSet<Operation *> result;
+  for (auto node : partition->getNodes()) {
+    if (!node->isOp())
+      continue;
+    Operation *alloc = nullptr;
+    if (auto load = dyn_cast<ttng::TMEMLoadOp>(node->getOp())) {
+      alloc = load.getOperand(0).getDefiningOp();
+    }
+    if (auto store = dyn_cast<ttng::TMEMStoreOp>(node->getOp())) {
+      alloc = store.getOperand(0).getDefiningOp();
+    }
+    if (alloc) {
+      assert(isa<ttng::TMEMAllocOp>(alloc));
+      result.insert(alloc);
+    }
+  }
+  return result;
+}
+
 SmallVector<
     std::pair<std::string, std::function<bool(Partition *, Partition *)>>>
     partition_heuristics = {
+
+        // merge TMEM partitions together, if they use the same tmem alloc
+        // and that alloc is used in more than 2 partitions
+        // as aref does not support tmem with more than 2 partitions
+        {"tmem_partitions",
+         [](Partition *a, Partition *b) {
+           auto a_is_tmem = (a->getFlags() & Flags::TMEM);
+           auto b_is_tmem = (b->getFlags() & Flags::TMEM);
+           if (!a_is_tmem && b_is_tmem) {
+             return false;
+           }
+           auto allocs_a = getTMEMAllocs(a);
+           auto allocs_b = getTMEMAllocs(b);
+           // if the sets are overlapping
+           bool overlap = false;
+           for (auto alloc_a : allocs_a) {
+             if (allocs_b.contains(alloc_a)) {
+               overlap = true;
+               break;
+             }
+           }
+           if (!overlap)
+             return false;
+           return true;
+         }},
+
         // // merge load partitions that are consumed by the same partition
         // {"load_partitions_with_same_consumer",
         //  [](Partition *a, Partition *b) {
@@ -2220,7 +2281,7 @@ void assignPartitionIds(Graph *graph) {
         other_partitions.push_back(partition.get());
     }
 
-    for (auto partition : store_partitions) {
+    for (auto partition : other_partitions) {
       partition->id = idx;
       idx++;
     }
@@ -2232,7 +2293,7 @@ void assignPartitionIds(Graph *graph) {
       partition->id = idx;
       idx++;
     }
-    for (auto partition : other_partitions) {
+    for (auto partition : store_partitions) {
       partition->id = idx;
       idx++;
     }
