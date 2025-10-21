@@ -1087,6 +1087,24 @@ SmallVector<std::pair<std::string, std::function<bool(Edge)>>> heuristics = {
        return true;
      }},
 
+    // if op result placed in same partition as MMA op that produces it (if it
+    // is a token)
+    {"if_op_result_token",
+     [](Edge edge) {
+       auto from = edge.getFromNode();
+       auto to = edge.getToNode();
+       if (!isMMA(from)) {
+         // skip if not from an MMA
+       }
+       if (!isIfResult(to))
+         // skip if not to an if op result
+         return false;
+       if (!isa<AsyncTokenType>(to->getValue().getType()))
+         // skip if not a token
+         return false;
+       return true;
+     }},
+
     // straight sequence of SIMT/NONE ops merges together
     {"sequence",
      [](Edge edge) {
