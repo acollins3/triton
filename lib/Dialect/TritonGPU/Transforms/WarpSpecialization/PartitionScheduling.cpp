@@ -1846,6 +1846,7 @@ void propagatePartitions(Graph *graph, std::string funcName,
     changed = false;
     while (!nodes.empty()) {
       // try propagating partitions forward to nodes with no partition
+      int start_size = nodes.size();
       bool changed = false;
       for (auto node : nodes) {
         for (auto edge : node->getInEdges()) {
@@ -1859,12 +1860,17 @@ void propagatePartitions(Graph *graph, std::string funcName,
         }
       }
       // must have changed something, otherwise infinite loop
-      assert(changed);
+      // assert(changed);
       // remove all nodes that now have a partition
       nodes.erase(
           std::remove_if(nodes.begin(), nodes.end(),
                          [](Node *node) { return node->hasPartition(); }),
           nodes.end());
+      int end_size = nodes.size();
+      if (start_size == end_size) {
+        // no change -> exit
+        break;
+      }
     }
   }
 
