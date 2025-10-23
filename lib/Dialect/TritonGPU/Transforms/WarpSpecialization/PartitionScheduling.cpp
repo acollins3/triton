@@ -1741,7 +1741,7 @@ void propagatePartitions(Graph *graph, std::string funcName,
   };
 
   if (options.dump_dot)
-    visualize(dump_name(0), "propagate", graph, vis_info);
+    visualize(dump_name(0), "before propagate", graph, vis_info);
 
   // propagate partitions to parent ops
   SmallVector<Node *> leaves;
@@ -1809,27 +1809,67 @@ void propagatePartitions(Graph *graph, std::string funcName,
           auto node = stack.back();
           stack.pop_back();
 
-          for (auto edge : node->getInEdges()) {
-            if (edge.isDataValue() || !edge.getFromNode())
-              continue;
-            auto fromNode = edge.getFromNode();
-            auto numPartitionsBefore = fromNode->getPartitions().size();
-            fromNode->addPartitions(partitions);
-            auto numPartitionsAfter = fromNode->getPartitions().size();
+          auto propagate = [&](Edge edge, Node *node) {
+            if (!node || node->isData())
+              return;
+            auto numPartitionsBefore = node->getPartitions().size();
+            node->addPartitions(partitions);
+            auto numPartitionsAfter = node->getPartitions().size();
             changed |= (numPartitionsBefore != numPartitionsAfter);
-
-            if (seen.count(edge.getFromNode()) == 0) {
-              stack.push_back(fromNode);
-              seen.insert(fromNode);
+            if (seen.count(node) == 0) {
+              stack.push_back(node);
+              seen.insert(node);
             }
-          }
+          };
+
+          for (auto edge : node->getInEdges())
+            propagate(edge, edge.getFromNode());
+          // for (auto edge : node->getOutEdges())
+          //  propagate(edge, edge.getToNode());
         }
       }
     }
   }
 
   if (options.dump_dot)
-    visualize(dump_name(1), "propagate", graph, vis_info);
+    visualize(dump_name(1), "after propagate", graph, vis_info);
+
+  // propagate partitions to non-data nodes (forward)
+  {
+    SmallVector<Node *> nodes;
+    // get nodes that have no partition assigned
+    graph->walk([&](Node *node) {
+      if (!node->hasPartition())
+        nodes.push_back(node);
+    });
+
+    changed = false;
+    while (!nodes.empty()) {
+      // try propagating partitions forward to nodes with no partition
+      bool changed = false;
+      for (auto node : nodes) {
+        for (auto edge : node->getInEdges()) {
+          if (!edge.getFromNode())
+            continue;
+          if (edge.getFromNode()->hasPartition()) {
+            for (auto partition : edge.getFromNode()->getPartitions())
+              node->setPartition(partition);
+            changed = true;
+          }
+        }
+      }
+      // must have changed something, otherwise infinite loop
+      assert(changed);
+      // remove all nodes that now have a partition
+      nodes.erase(
+          std::remove_if(nodes.begin(), nodes.end(),
+                         [](Node *node) { return node->hasPartition(); }),
+          nodes.end());
+    }
+  }
+
+  if (options.dump_dot)
+    visualize(dump_name(2), "propagate forward", graph, vis_info);
 
   // propagate partitions of tt.reduce into its body
   graph->walk([&](Node *node) {
@@ -1841,7 +1881,7 @@ void propagatePartitions(Graph *graph, std::string funcName,
   });
 
   if (options.dump_dot)
-    visualize(dump_name(2), "propagate reduce", graph, vis_info);
+    visualize(dump_name(3), "propagate reduce", graph, vis_info);
 
   // Corner case: tmem store following tmem alloc should be in a warp
   // partition with 4 warps (i.e. a non-mma partition)
@@ -1876,7 +1916,7 @@ void propagatePartitions(Graph *graph, std::string funcName,
   });
 
   if (options.dump_dot)
-    visualize(dump_name(3), "tmem store corner case", graph, vis_info);
+    visualize(dump_name(4), "tmem store corner case", graph, vis_info);
 
   // propagate partitions for patched up nodes to non-data nodes
   for (auto node : patched_nodes) {
@@ -1907,7 +1947,7 @@ void propagatePartitions(Graph *graph, std::string funcName,
   }
 
   if (options.dump_dot)
-    visualize(dump_name(4), "propagate", graph, vis_info);
+    visualize(dump_name(5), "propagate", graph, vis_info);
 }
 
 void visualize(std::string path, std::string name, Graph *graph,
@@ -2045,7 +2085,11 @@ void visualize(std::string path, std::string name, Graph *graph,
         else
           dot << "in" << inputPort.getIdx();
         if (edge.isDataValue()) {
-          if (edge.crossesPartitions())
+          if (edge.getFromNode()->getPartitions().size() > 1 ||
+              edge.getFromNode()->getPartitions().size() > 1)
+            // invalid edge, should only have one partition
+            dot << "[color=\"green\"]";
+          else if (edge.crossesPartitions())
             dot << "[color=\"red\"]";
           else
             dot << "[color=\"blue\"]";
