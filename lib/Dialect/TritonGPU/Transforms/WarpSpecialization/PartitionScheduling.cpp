@@ -1174,6 +1174,14 @@ SmallVector<std::pair<std::string, std::function<bool(Edge)>>> heuristics = {
        return (isTMEM(from) || isSIMT(from) || isStore(from)) && isNone(to);
      }},
 
+    // NONE group followed by STORE should merge
+    {"mma_store_without_tmem",
+     [](Edge edge) {
+       auto from = edge.getFromNode();
+       auto to = edge.getToNode();
+       return isNone(from) && isStore(to);
+     }},
+
     // // merge SIMT partition into following partition, if the SIMT ops
     // // do not compute the LHS operand of an mma
     // {"simt_partition_mma_lhs_only",
