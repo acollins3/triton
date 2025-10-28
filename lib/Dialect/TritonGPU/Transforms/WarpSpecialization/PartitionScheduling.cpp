@@ -1175,11 +1175,27 @@ SmallVector<std::pair<std::string, std::function<bool(Edge)>>> heuristics = {
      }},
 
     // NONE group followed by STORE should merge
-    {"mma_store_without_tmem",
+    {"none_store",
      [](Edge edge) {
        auto from = edge.getFromNode();
        auto to = edge.getToNode();
        return isNone(from) && isStore(to);
+     }},
+
+    // NONE group followed by NONE should merge
+    {"none_none",
+     [](Edge edge) {
+       auto from = edge.getFromNode();
+       auto to = edge.getToNode();
+       return isNone(from) && isNone(to);
+     }},
+
+    // NONE group followed by LOAD should merge
+    {"none_load",
+     [](Edge edge) {
+       auto from = edge.getFromNode();
+       auto to = edge.getToNode();
+       return isNone(from) && isLoad(to);
      }},
 
     // // merge SIMT partition into following partition, if the SIMT ops
