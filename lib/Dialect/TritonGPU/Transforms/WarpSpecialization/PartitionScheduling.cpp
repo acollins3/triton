@@ -2158,6 +2158,9 @@ void serialize(size_t idx, Operation *region, Graph *graph) {
     SmallVector<int> partitions;
     for (auto partition : node->getPartitions())
       partitions.push_back(partition->id);
+    // if partition list is empty, assign to default partition
+    if (partitions.empty())
+      partitions.push_back(0);
     std::sort(partitions.begin(), partitions.end());
     auto partitionsAttr = b.getDenseI32ArrayAttr(partitions);
     op->setAttr(kPartitionAttrName, partitionsAttr);
