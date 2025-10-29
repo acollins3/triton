@@ -2174,9 +2174,6 @@ void serialize(size_t idx, Operation *region, Graph *graph) {
     SmallVector<int> partitions;
     for (auto partition : node->getPartitions())
       partitions.push_back(partition->id);
-    // if partition list is empty, assign to default partition
-    if (partitions.empty())
-      partitions.push_back(0);
     std::sort(partitions.begin(), partitions.end());
     auto partitionsAttr = b.getDenseI32ArrayAttr(partitions);
     op->setAttr(kPartitionAttrName, partitionsAttr);
@@ -2395,6 +2392,28 @@ void assignPartitionIds(Graph *graph) {
   }
 }
 
+void assignDefaultPartitions(Graph *graph) {
+  // nodes with no partition placed in default partition
+  Partition *defaultPartition = nullptr;
+  for (auto &partition : graph->getPartitions()) {
+    if (partition->id == 0) {
+      defaultPartition = partition.get();
+    }
+  }
+  assert(defaultPartition != nullptr);
+  graph->walk([&](Node *node) {
+    if (node->getPartitions().empty()) {
+      node->setPartition(defaultPartition);
+      // propagate to parents
+      auto parent = node->getParent();
+      while (parent != nullptr) {
+        parent->setPartition(defaultPartition);
+        parent = parent->getParent();
+      }
+    }
+  });
+}
+
 } // namespace
 
 //===----------------------------------------------------------------------===//
@@ -2484,6 +2503,10 @@ private:
                 graph.get(), vis_info);
 
     assignPartitionIds(graph.get());
+    // Handle case where ops with no uses (like llvm.intr.assume) get no
+    // partition Assign them to default partition, and rerun propagation
+    assignDefaultPartitions(graph.get());
+    propagatePartitions(graph.get(), key, vis_info);
 
     LLVM_DEBUG({
       llvm::errs() << "\nfinal partitions:\n";
