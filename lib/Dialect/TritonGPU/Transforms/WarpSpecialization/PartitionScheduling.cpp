@@ -184,7 +184,7 @@ public:
                  << "}\n";
   }
 
-  size_t id = 0;
+  std::optional<size_t> id;
 
 private:
   Graph *graph;
@@ -2173,7 +2173,7 @@ void serialize(size_t idx, Operation *region, Graph *graph) {
       return;
     SmallVector<int> partitions;
     for (auto partition : node->getPartitions())
-      partitions.push_back(partition->id);
+      partitions.push_back(*partition->id);
     std::sort(partitions.begin(), partitions.end());
     auto partitionsAttr = b.getDenseI32ArrayAttr(partitions);
     op->setAttr(kPartitionAttrName, partitionsAttr);
@@ -2209,7 +2209,7 @@ void serialize(size_t idx, Operation *region, Graph *graph) {
     // update partitions for this output
     SmallVector<int> partitions;
     for (auto partition : node->getPartitions())
-      partitions.push_back(partition->id);
+      partitions.push_back(*partition->id);
     std::sort(partitions.begin(), partitions.end());
     partitionAttrs[idx] = b.getDenseI32ArrayAttr(partitions);
     op->setAttr(kPartitionOutputsAttrName,
@@ -2352,43 +2352,41 @@ void assignPartitionIds(Graph *graph) {
   // assign unique ids for partitions
   // starting with store partitions, followed by everything else
   // FIXME: this is a hack, why is ordering important?
-  {
-    size_t idx = 0;
+  size_t idx = 0;
 
-    SmallVector<Partition *> store_partitions;
-    SmallVector<Partition *> mma_partitions;
-    SmallVector<Partition *> load_partitions;
-    SmallVector<Partition *> other_partitions;
+  SmallVector<Partition *> store_partitions;
+  SmallVector<Partition *> mma_partitions;
+  SmallVector<Partition *> load_partitions;
+  SmallVector<Partition *> other_partitions;
 
-    for (auto &partition : graph->getPartitions()) {
-      if (partition->empty())
-        continue;
-      if (partition->getFlags() & Flags::STORE)
-        store_partitions.push_back(partition.get());
-      else if (partition->getFlags() & Flags::MMA)
-        mma_partitions.push_back(partition.get());
-      else if (partition->getFlags() & Flags::LOAD)
-        load_partitions.push_back(partition.get());
-      else
-        other_partitions.push_back(partition.get());
-    }
+  for (auto &partition : graph->getPartitions()) {
+    if (partition->empty())
+      continue;
+    if (partition->getFlags() & Flags::STORE)
+      store_partitions.push_back(partition.get());
+    else if (partition->getFlags() & Flags::MMA)
+      mma_partitions.push_back(partition.get());
+    else if (partition->getFlags() & Flags::LOAD)
+      load_partitions.push_back(partition.get());
+    else
+      other_partitions.push_back(partition.get());
+  }
 
-    for (auto partition : other_partitions) {
-      partition->id = idx;
-      idx++;
-    }
-    for (auto partition : store_partitions) {
-      partition->id = idx;
-      idx++;
-    }
-    for (auto partition : mma_partitions) {
-      partition->id = idx;
-      idx++;
-    }
-    for (auto partition : load_partitions) {
-      partition->id = idx;
-      idx++;
-    }
+  for (auto partition : other_partitions) {
+    partition->id = idx;
+    idx++;
+  }
+  for (auto partition : store_partitions) {
+    partition->id = idx;
+    idx++;
+  }
+  for (auto partition : mma_partitions) {
+    partition->id = idx;
+    idx++;
+  }
+  for (auto partition : load_partitions) {
+    partition->id = idx;
+    idx++;
   }
 }
 
@@ -2396,7 +2394,7 @@ void assignDefaultPartitions(Graph *graph) {
   // nodes with no partition placed in default partition
   Partition *defaultPartition = nullptr;
   for (auto &partition : graph->getPartitions()) {
-    if (partition->id == 0) {
+    if (partition->id && *partition->id == 0) {
       defaultPartition = partition.get();
     }
   }
@@ -2405,11 +2403,6 @@ void assignDefaultPartitions(Graph *graph) {
     if (node->getPartitions().empty()) {
       node->setPartition(defaultPartition);
       // propagate to parents
-      auto parent = node->getParent();
-      while (parent != nullptr) {
-        parent->setPartition(defaultPartition);
-        parent = parent->getParent();
-      }
     }
   });
 }
