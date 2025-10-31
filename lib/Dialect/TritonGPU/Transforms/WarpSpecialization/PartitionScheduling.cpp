@@ -1070,14 +1070,11 @@ SmallVector<std::pair<std::string, std::function<bool(Edge)>>> heuristics = {
      }},
 
     // for op iter arg placed in same partition as op that consumes
-    // its value in the loop body (if it is a token)
+    // its value (if it is a token)
     {"for_op_iter_arg_token",
      [](Edge edge) {
        auto from = edge.getFromNode();
        auto to = edge.getToNode();
-       if (from->getParent() != to->getParent())
-         // skip if not both in the loop body
-         return false;
        if (!isForIterArg(from))
          // skip if not from an iter arg
          return false;
