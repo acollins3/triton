@@ -1576,11 +1576,14 @@ SmallVector<
            return a_is_mma && b_is_mma;
          }},
 
-        // merge store partitions
+        // merge store partitions and none partitions
         {"store_partitions_horizontal",
          [](Partition *a, Partition *b) {
-           auto a_is_store = (a->getFlags() & Flags::STORE);
-           auto b_is_store = (b->getFlags() & Flags::STORE);
+           auto a_is_store =
+               (a->getFlags() & Flags::STORE) || (a->getFlags() == Flags::NONE);
+           auto b_is_store =
+               (b->getFlags() & Flags::STORE) || (b->getFlags() == Flags::NONE);
+           ;
            return a_is_store && b_is_store;
          }},
 
