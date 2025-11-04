@@ -2387,7 +2387,8 @@ void assignPartitionIds(Graph *graph) {
 }
 
 void assignDefaultPartitions(Graph *graph) {
-  // nodes with no partition placed in default partition
+  // nodes with no partition placed in partitions of enclosing op, or default
+  // partition if none
   Partition *defaultPartition = nullptr;
   for (auto &partition : graph->getPartitions()) {
     if (partition->id && *partition->id == 0) {
@@ -2397,8 +2398,12 @@ void assignDefaultPartitions(Graph *graph) {
   assert(defaultPartition != nullptr);
   graph->walk([&](Node *node) {
     if (node->getPartitions().empty()) {
-      node->setPartition(defaultPartition);
-      // propagate to parents
+      auto parent = node->getParent();
+      if (parent && parent->hasPartition()) {
+        node->addPartitions(parent->getPartitions());
+      } else {
+        node->setPartition(defaultPartition);
+      }
     }
   });
 }
