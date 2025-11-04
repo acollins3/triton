@@ -662,8 +662,8 @@ struct VisualizationInfo {
   DenseMap<Partition *, std::string> partition_colors;
 };
 
-void visualize(std::string path, std::string name, Graph *graph,
-               VisualizationInfo &info);
+void visualize(std::string key, std::string filename, std::string title,
+               Graph *graph, VisualizationInfo &info);
 
 std::unique_ptr<Graph> buildGraph(Operation *region) {
   DenseMap<Operation *, Node *> nodes;
@@ -1669,11 +1669,8 @@ void mergePartitions(Graph *graph, std::string funcName,
             Partition::merge(from_partition, to_partition);
 
             if (options.dump_dot) {
-              std::stringstream filename;
-              filename << "graph-merge-step-" << std::setfill('0')
-                       << std::setw(4) << iter << "-" << funcName << ".dot";
-              visualize(filename.str(), std::string("merge: rule ") + name,
-                        graph, vis_info);
+              visualize(funcName, "merge-step",
+                        std::string("merge: rule ") + name, graph, vis_info);
             }
             iter++;
 
@@ -1709,10 +1706,8 @@ void mergePartitions(Graph *graph, std::string funcName,
               Partition::merge(partitionA, partitionB);
               if (options.dump_dot) {
                 std::stringstream filename;
-                filename << "graph-merge-step-" << std::setfill('0')
-                         << std::setw(4) << iter << "-" << funcName << ".dot";
-                visualize(filename.str(), std::string("merge: rule ") + name,
-                          graph, vis_info);
+                visualize(funcName, "merge-step",
+                          std::string("merge: rule ") + name, graph, vis_info);
               }
               iter++;
               return false;
@@ -1757,15 +1752,8 @@ void propagatePartitions(Graph *graph, std::string funcName,
                          VisualizationInfo &vis_info) {
   auto &options = get_options();
 
-  auto dump_name = [&](int idx) {
-    std::stringstream name;
-    name << "graph-propagate-step-" << std::setfill('0') << std::setw(4) << idx
-         << "-" << funcName << ".dot";
-    return name.str();
-  };
-
   if (options.dump_dot)
-    visualize(dump_name(0), "before propagate", graph, vis_info);
+    visualize(funcName, "propagate", "before propagate", graph, vis_info);
 
   // propagate partitions to parent ops
   SmallVector<Node *> leaves;
@@ -1856,7 +1844,7 @@ void propagatePartitions(Graph *graph, std::string funcName,
   }
 
   if (options.dump_dot)
-    visualize(dump_name(1), "after propagate", graph, vis_info);
+    visualize(funcName, "propagate", "after propagate", graph, vis_info);
 
   // propagate partitions to non-data nodes (forward)
   {
@@ -1899,7 +1887,7 @@ void propagatePartitions(Graph *graph, std::string funcName,
   }
 
   if (options.dump_dot)
-    visualize(dump_name(2), "propagate forward", graph, vis_info);
+    visualize(funcName, "propagate", "propagate forward", graph, vis_info);
 
   // propagate partitions of tt.reduce into its body
   graph->walk([&](Node *node) {
@@ -1911,7 +1899,7 @@ void propagatePartitions(Graph *graph, std::string funcName,
   });
 
   if (options.dump_dot)
-    visualize(dump_name(3), "propagate reduce", graph, vis_info);
+    visualize(funcName, "propagate", "propagate reduce", graph, vis_info);
 
   // Corner case: tmem store following tmem alloc should be in a warp
   // partition with 4 warps (i.e. a non-mma partition)
@@ -1946,7 +1934,7 @@ void propagatePartitions(Graph *graph, std::string funcName,
   });
 
   if (options.dump_dot)
-    visualize(dump_name(4), "tmem store corner case", graph, vis_info);
+    visualize(funcName, "propagate", "tmem store corner case", graph, vis_info);
 
   // propagate partitions for patched up nodes to non-data nodes
   for (auto node : patched_nodes) {
@@ -1975,18 +1963,26 @@ void propagatePartitions(Graph *graph, std::string funcName,
       }
     }
   }
-
-  if (options.dump_dot)
-    visualize(dump_name(5), "propagate", graph, vis_info);
 }
 
-void visualize(std::string path, std::string name, Graph *graph,
-               VisualizationInfo &info) {
+void visualize(std::string key, std::string filename, std::string title,
+               Graph *graph, VisualizationInfo &info) {
+
+  static std::map<std::string, int> keys;
+  if (keys.find(key) == keys.end()) {
+    keys[key] = 0;
+  }
+  auto idx = keys[key];
+  keys[key]++;
+
   const auto &options = get_options();
 
-  std::ofstream dot(path);
+  std::stringstream path;
+  path << "graph-" << key << "-" << std::setfill('0') << std::setw(4) << idx
+       << "-" << filename << ".dot";
+  std::ofstream dot(path.str());
   dot << "digraph G {\n";
-  dot << "label = \"" << name << "\";\n";
+  dot << "label = \"" << title << "\";\n";
   dot << "labelloc=\"t\";\n";
   dot << "labeljust=\"c\";\n";
 
@@ -2478,28 +2474,31 @@ private:
     propagateDataValues(initValues);
     options.manual = deserializeManualPartitions(op, graph.get());
     VisualizationInfo vis_info;
-    auto key = func.getSymName().str() + "-" + std::to_string(idx);
+    auto key = func.getSymName().str() + "_" + std::to_string(idx);
     if (options.dump_dot)
-      visualize(std::string("graph-input-") + key + ".dot", "input",
-                graph.get(), vis_info);
+      visualize(key, "input", "input", graph.get(), vis_info);
     initialPartitionAssignment(graph.get());
     if (options.dump_dot)
-      visualize(std::string("graph-initial-") + key + ".dot",
-                "initial partitions", graph.get(), vis_info);
+      visualize(key, "initial", "initial partitions", graph.get(), vis_info);
     mergePartitions(graph.get(), key, vis_info);
     if (options.dump_dot)
-      visualize(std::string("graph-merged-") + key + ".dot", "merged",
-                graph.get(), vis_info);
+      visualize(key, "merge", "merged", graph.get(), vis_info);
     propagatePartitions(graph.get(), key, vis_info);
     if (options.dump_dot)
-      visualize(std::string("graph-final-") + key + ".dot", "final",
-                graph.get(), vis_info);
+      visualize(key, "propagate", "propagated", graph.get(), vis_info);
 
     assignPartitionIds(graph.get());
+    if (options.dump_dot)
+      visualize(key, "assign-partition-ids", "assign partition ids",
+                graph.get(), vis_info);
     // Handle case where ops with no uses (like llvm.intr.assume) get no
     // partition Assign them to default partition, and rerun propagation
     assignDefaultPartitions(graph.get());
+    if (options.dump_dot)
+      visualize(key, "assign-default", "assign default", graph.get(), vis_info);
     propagatePartitions(graph.get(), key, vis_info);
+    if (options.dump_dot)
+      visualize(key, "final", "final", graph.get(), vis_info);
 
     LLVM_DEBUG({
       llvm::errs() << "\nfinal partitions:\n";
@@ -2512,6 +2511,8 @@ private:
 
     serialize(idx, op, graph.get());
     deduplicateViewOps(op, duplicatedOps);
+    if (options.dump_dot)
+      visualize(key, "dedup-views", "dedup views", graph.get(), vis_info);
   }
 };
 
