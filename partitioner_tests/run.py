@@ -2,7 +2,7 @@ import subprocess
 import os
 from termcolor import cprint
 
-update = False
+update = True
 tests = [x.replace('.input.mlir', '') for x in sorted(os.listdir(".")) if x.endswith(".input.mlir")]
 
 for test in tests:
@@ -13,16 +13,6 @@ for test in tests:
     # print(f"    {test_name}")
 
     env = {"TRITON_OVERRIDE_ARCH": "sm100"}
-    subprocess.check_call(
-        [
-            "/workdir/git/build/cmake.linux-x86_64-cpython-3.12/bin/triton-opt",
-            "--tritongpu-partition-scheduling",
-            "-allow-unregistered-dialect",
-            test + ".input.mlir",
-        ],
-        env=env,
-        stderr=subprocess.STDOUT,
-    )
     actual_output = subprocess.check_output(
         [
             "/workdir/git/build/cmake.linux-x86_64-cpython-3.12/bin/triton-opt",
@@ -36,7 +26,7 @@ for test in tests:
 
     if update:
         with open(test + ".output.mlir", "w") as file:
-            file.write(actual_output)
+            file.write(actual_output.strip() + '\n')
 
     with open(test + ".output.mlir", "r") as file:
         expected_output = file.read().strip()
