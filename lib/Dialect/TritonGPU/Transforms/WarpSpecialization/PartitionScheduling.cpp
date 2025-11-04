@@ -1040,11 +1040,12 @@ bool isIfResult(Node *node) {
 
 SmallVector<std::pair<std::string, std::function<bool(Edge)>>> heuristics = {
     // load followed by local alloc always in same partition
-    {"load_alloc",
-     [](Edge edge) {
-       return node_isa<tt::DescriptorLoadOp, tt::LoadOp>(edge.getFromNode()) &&
-              node_isa<ttg::LocalAllocOp>(edge.getToNode());
-     }},
+    // {"load_alloc",
+    //  [](Edge edge) {
+    //    return node_isa<tt::DescriptorLoadOp, tt::LoadOp>(edge.getFromNode())
+    //    &&
+    //           node_isa<ttg::LocalAllocOp>(edge.getToNode());
+    //  }},
 
     // view op in same partition as user
     // Note: view ops guaranteed to have been duplicated so there is one
