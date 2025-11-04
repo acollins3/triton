@@ -582,7 +582,8 @@ Flags getNodeFlags(Node *node) {
     if (op->hasAttr("store"))
       return Flags::STORE;
 
-    if (isa<tt::DescriptorLoadOp>(op) || isAsyncLoad(node))
+    if (isa<tt::DescriptorLoadOp, tt::DescriptorGatherOp>(op) ||
+        isAsyncLoad(node))
       return Flags::LOAD;
     if (!options.disable_epilogue &&
         isa</*tt::StoreOp,*/ tt::DescriptorStoreOp>(op))
@@ -595,7 +596,7 @@ Flags getNodeFlags(Node *node) {
       return Flags::TMEM;
     // if (isa<math::Exp2Op>(op))
     //  return Flags::SFU;
-    if (isa<tt::BroadcastOp, tt::ExpandDimsOp>(op) ||
+    if (isa<tt::BroadcastOp, tt::ExpandDimsOp, ttg::ConvertLayoutOp>(op) ||
         op->hasTrait<OpTrait::MemDescViewTrait>())
       return Flags::VIEW;
     if (!options.disable_simt && isSIMTOp(op))
