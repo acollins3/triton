@@ -2387,8 +2387,10 @@ void assignPartitionIds(Graph *graph) {
 }
 
 void assignDefaultPartitions(Graph *graph) {
-  // nodes with no partition placed in partitions of enclosing op, or default
-  // partition if none
+  // nodes with no partition placed in same partition as other ops in the region
+  // or default partition if none.
+  // Note: we can't just use partitions of parent op, as this includes things
+  // like tmem tokens
   Partition *defaultPartition = nullptr;
   for (auto &partition : graph->getPartitions()) {
     if (partition->id && *partition->id == 0) {
@@ -2398,10 +2400,20 @@ void assignDefaultPartitions(Graph *graph) {
   assert(defaultPartition != nullptr);
   graph->walk([&](Node *node) {
     if (node->getPartitions().empty()) {
+      bool done = false;
       auto parent = node->getParent();
-      if (parent && parent->hasPartition()) {
-        node->addPartitions(parent->getPartitions());
-      } else {
+      if (parent && parent->isOp()) {
+        for (auto &otherNode : parent->getNodes()) {
+          if (node == otherNode.get()) {
+            continue;
+          }
+          if (otherNode->isOp() && otherNode->hasPartition()) {
+            node->addPartitions(otherNode->getPartitions());
+            done = true;
+          }
+        }
+      }
+      if (!done) {
         node->setPartition(defaultPartition);
       }
     }
