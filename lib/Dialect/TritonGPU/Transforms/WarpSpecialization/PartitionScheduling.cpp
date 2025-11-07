@@ -434,9 +434,8 @@ public:
   }
 
   std::string getLabel() {
-    if (op) {
+    if (op)
       return op->getName().getStringRef().str();
-    }
     if (auto blockArg = dyn_cast<BlockArgument>(value)) {
       auto parentOp = blockArg.getOwner()->getParentOp();
       if (isa<tt::FuncOp>(parentOp))
@@ -550,6 +549,24 @@ bool isSIMTOp(Operation *op) {
   return false;
 }
 
+bool isScalarLoad(Node *node) {
+  if (!node_isa<tt::LoadOp>(node))
+    return false;
+
+  auto op = cast<tt::LoadOp>(node->getOp());
+
+  op->getResult(0).getType().dump();
+  if (auto tensorType =
+          dyn_cast<mlir::RankedTensorType>(op->getResult(0).getType())) {
+    for (auto dim : tensorType.getShape())
+      if (dim != 1)
+        return false;
+    return true;
+  }
+
+  return true;
+}
+
 bool isAsyncLoad(Node *node) {
   // Special case:
   // tt.load that occurs in a sequence:
@@ -582,8 +599,9 @@ Flags getNodeFlags(Node *node) {
     if (op->hasAttr("store"))
       return Flags::STORE;
 
-    if (isa<tt::DescriptorLoadOp, tt::DescriptorGatherOp>(op) ||
-        isAsyncLoad(node))
+    if (isa<tt::DescriptorLoadOp, tt::DescriptorGatherOp>(op)
+        //|| (isAsyncLoad(node) && !isScalarLoad(node))
+    )
       return Flags::LOAD;
     if (!options.disable_epilogue &&
         isa</*tt::StoreOp,*/ tt::DescriptorStoreOp>(op))
@@ -646,9 +664,15 @@ bool Edge::isDataValue() const {
 }
 
 bool Edge::crossesPartitions() const {
-  return isDataValue() && from.getNode()->hasPartition() &&
-         to.getNode()->hasPartition() &&
-         from.getNode()->getPartition() != to.getNode()->getPartition();
+  if (!isDataValue())
+    return false;
+  if (!from.getNode()->hasPartition() || !to.getNode()->hasPartition())
+    return false;
+  // FIXME: may not handle multiple partitions correctly
+  if (from.getNode()->getPartitions().size() != 1 ||
+      to.getNode()->getPartitions().size() != 1)
+    return false;
+  return from.getNode()->getPartition() != to.getNode()->getPartition();
 }
 
 Type Edge::getType() const {
@@ -842,10 +866,17 @@ SmallVector<OutputPort> initialDataValues(Graph *graph) {
   graph->walk([&](Node *node) {
     if (node->isOp()) {
       auto op = node->getOp();
-      if (isa<tt::LoadOp, tt::DescriptorLoadOp>(op)) {
+      if (isa<tt::DescriptorLoadOp, tt::DescriptorGatherOp>(op)) {
         node->setDataValue(0);
         values.push_back({node, 0});
       }
+      // if (isa<tt::LoadOp>(op)) {
+      //   op->dump();
+      //   if (isAsyncLoad(node) && !isScalarLoad(node)) {
+      //     node->setDataValue(0);
+      //     values.push_back({node, 0});
+      //   }
+      // }
       if (isa<ttng::TMEMLoadOp>(op)) {
         node->setDataValue(0);
         values.push_back({node, 0});
@@ -2544,8 +2575,9 @@ private:
 
     serialize(idx, op, graph.get());
     deduplicateViewOps(op, duplicatedOps);
-    if (options.dump_dot)
-      visualize(key, "dedup-views", "dedup views", graph.get(), vis_info);
+    // FIXME: dedup removes ops, so following visualization can crash
+    // if (options.dump_dot)
+    //   visualize(key, "dedup-views", "dedup views", graph.get(), vis_info);
   }
 };
 
