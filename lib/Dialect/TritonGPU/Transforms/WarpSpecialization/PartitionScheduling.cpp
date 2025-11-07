@@ -1039,13 +1039,27 @@ bool isIfResult(Node *node) {
 }
 
 SmallVector<std::pair<std::string, std::function<bool(Edge)>>> heuristics = {
-    // load followed by local alloc always in same partition
-    // {"load_alloc",
-    //  [](Edge edge) {
-    //    return node_isa<tt::DescriptorLoadOp, tt::LoadOp>(edge.getFromNode())
-    //    &&
-    //           node_isa<ttg::LocalAllocOp>(edge.getToNode());
-    //  }},
+    // load followed by local alloc in same partition
+    {"load_alloc",
+     [](Edge edge) {
+       if (!node_isa<ttg::LocalAllocOp>(edge.getToNode())) {
+         return false;
+       }
+
+       if (node_isa<tt::DescriptorLoadOp, tt::DescriptorGatherOp>(
+               edge.getFromNode())) {
+         // require layouts to match for TMA load + alloc
+         auto load = edge.getFromNode()->getOp();
+         auto alloc = cast<ttg::LocalAllocOp>(edge.getToNode()->getOp());
+         return getSharedEncoding(load) == alloc.getType().getEncoding();
+       }
+
+       if (node_isa<tt::LoadOp>(edge.getFromNode())) {
+         return true;
+       }
+
+       return false;
+     }},
 
     // view op in same partition as user
     // Note: view ops guaranteed to have been duplicated so there is one
@@ -2114,7 +2128,7 @@ void visualize(std::string key, std::string filename, std::string title,
           dot << "in" << inputPort.getIdx();
         if (edge.isDataValue()) {
           if (edge.getFromNode()->getPartitions().size() > 1 ||
-              edge.getFromNode()->getPartitions().size() > 1)
+              edge.getToNode()->getPartitions().size() > 1)
             // invalid edge, should only have one partition
             dot << "[color=\"green\"]";
           else if (edge.crossesPartitions())
