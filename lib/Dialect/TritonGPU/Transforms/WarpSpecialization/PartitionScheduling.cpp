@@ -1559,11 +1559,13 @@ SmallVector<
         // merge TMEM partitions together, if they use the same tmem alloc
         // and that alloc is used in more than 2 partitions
         // as aref does not support tmem with more than 2 partitions
+        // FIXME: this is a bit broken - it might merge too much - i.e. doesn't
+        // just merge up to 2 partitions
         {"tmem_partitions",
          [](Partition *a, Partition *b) {
            auto a_is_tmem = (a->getFlags() & Flags::TMEM);
            auto b_is_tmem = (b->getFlags() & Flags::TMEM);
-           if (!a_is_tmem && b_is_tmem) {
+           if (!a_is_tmem || !b_is_tmem) {
              return false;
            }
            auto allocs_a = getTMEMAllocs(a);
