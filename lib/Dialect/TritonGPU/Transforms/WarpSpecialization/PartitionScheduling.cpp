@@ -1240,6 +1240,14 @@ SmallVector<std::pair<std::string, std::function<bool(Edge)>>> heuristics = {
        return isNone(from) && isLoad(to);
      }},
 
+    // NONE group followed by TMEM should merge
+    {"none_tmem",
+     [](Edge edge) {
+       auto from = edge.getFromNode();
+       auto to = edge.getToNode();
+       return isNone(from) && isTMEM(to);
+     }},
+
     // // merge SIMT partition into following partition, if the SIMT ops
     // // do not compute the LHS operand of an mma
     // {"simt_partition_mma_lhs_only",
@@ -1623,19 +1631,20 @@ SmallVector<
            return a_is_mma && b_is_mma;
          }},
 
-        // merge store partitions and none partitions
+        // merge store/tmem partitions and none partitions
         {"store_partitions_horizontal",
          [](Partition *a, Partition *b) {
-           auto a_is_store =
-               (a->getFlags() & Flags::STORE) || (a->getFlags() == Flags::NONE);
-           auto b_is_store =
-               (b->getFlags() & Flags::STORE) || (b->getFlags() == Flags::NONE);
-           ;
+           auto a_is_store = (a->getFlags() & Flags::STORE) ||
+                             (a->getFlags() & Flags::TMEM) ||
+                             (a->getFlags() == Flags::NONE);
+           auto b_is_store = (b->getFlags() & Flags::STORE) ||
+                             (b->getFlags() & Flags::TMEM) ||
+                             (b->getFlags() == Flags::NONE);
            return a_is_store && b_is_store;
          }},
 
         // merge load partitions
-        {"store_partitions_horizontal",
+        {"load_partitions_horizontal",
          [](Partition *a, Partition *b) {
            auto a_is_store = (a->getFlags() == Flags::LOAD);
            auto b_is_store = (b->getFlags() == Flags::LOAD);
