@@ -608,9 +608,7 @@ Flags getNodeFlags(Node *node) {
       return Flags::STORE;
     if (isa<ttng::MMAv5OpInterface>(op))
       return Flags::MMA;
-    if (isa<ttng::TMEMLoadOp>(op))
-      return Flags::TMEM;
-    if (isa<ttng::TMEMStoreOp>(op))
+    if (isa<ttng::TMEMAllocOp, ttng::TMEMLoadOp, ttng::TMEMStoreOp>(op))
       return Flags::TMEM;
     // if (isa<math::Exp2Op>(op))
     //  return Flags::SFU;
