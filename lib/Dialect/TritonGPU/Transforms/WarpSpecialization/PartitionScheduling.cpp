@@ -38,8 +38,6 @@ struct Options {
   bool dump_loop_only = false;
   bool dump_data_only = false;
   bool manual = false;
-  bool disable_simt = false;
-  bool disable_epilogue = false;
 };
 
 Options &get_options() {
@@ -58,9 +56,7 @@ enum Flags : uint8_t {
   STORE = 1 << 2,
   MMA = 1 << 3,
   TMEM = 1 << 4,
-  SFU = 1 << 5,
-  SIMT = 1 << 6,
-  VIEW = 1 << 7,
+  VIEW = 1 << 5,
 };
 
 Flags &operator|=(Flags &lhs, Flags rhs) {
@@ -82,10 +78,6 @@ std::ostream &operator<<(std::ostream &stream, Flags flags) {
       strs.push_back("MMA");
     if (flags & Flags::TMEM)
       strs.push_back("TMEM");
-    if (flags & Flags::SFU)
-      strs.push_back("SFU");
-    if (flags & Flags::SIMT)
-      strs.push_back("SIMT");
     if (flags & Flags::VIEW)
       strs.push_back("VIEW");
   }
@@ -112,10 +104,6 @@ llvm::raw_ostream &operator<<(llvm::raw_ostream &stream, Flags flags) {
       strs.push_back("MMA");
     if (flags & Flags::TMEM)
       strs.push_back("TMEM");
-    if (flags & Flags::SFU)
-      strs.push_back("SFU");
-    if (flags & Flags::SIMT)
-      strs.push_back("SIMT");
     if (flags & Flags::VIEW)
       strs.push_back("VIEW");
   }
@@ -537,18 +525,6 @@ template <typename... Args> bool node_isa(Node *node) {
   return node->isOp() && isa<Args...>(node->getOp());
 }
 
-bool isSIMTOp(Operation *op) {
-  // if (!op->getDialect() || !isa<arith::ArithDialect>(op->getDialect()))
-  //   return false;
-  // if (isa<arith::TruncFOp>(op))
-  //   return false;
-  // for (auto type :
-  //      llvm::concat<Type>(op->getOperandTypes(), op->getResultTypes()))
-  //   if (isa<RankedTensorType>(type))
-  //     return true;
-  return false;
-}
-
 bool isScalarLoad(Node *node) {
   if (!node_isa<tt::LoadOp>(node))
     return false;
@@ -603,20 +579,15 @@ Flags getNodeFlags(Node *node) {
         //|| (isAsyncLoad(node) && !isScalarLoad(node))
     )
       return Flags::LOAD;
-    if (!options.disable_epilogue &&
-        isa</*tt::StoreOp,*/ tt::DescriptorStoreOp>(op))
+    if (isa<tt::DescriptorStoreOp>(op))
       return Flags::STORE;
     if (isa<ttng::MMAv5OpInterface>(op))
       return Flags::MMA;
     if (isa<ttng::TMEMAllocOp, ttng::TMEMLoadOp, ttng::TMEMStoreOp>(op))
       return Flags::TMEM;
-    // if (isa<math::Exp2Op>(op))
-    //  return Flags::SFU;
     if (isa<tt::BroadcastOp, tt::ExpandDimsOp, ttg::ConvertLayoutOp>(op) ||
         op->hasTrait<OpTrait::MemDescViewTrait>())
       return Flags::VIEW;
-    if (!options.disable_simt && isSIMTOp(op))
-      return Flags::SIMT;
   }
   return Flags::NONE;
 }
@@ -869,7 +840,6 @@ SmallVector<OutputPort> initialDataValues(Graph *graph) {
         values.push_back({node, 0});
       }
       // if (isa<tt::LoadOp>(op)) {
-      //   op->dump();
       //   if (isAsyncLoad(node) && !isScalarLoad(node)) {
       //     node->setDataValue(0);
       //     values.push_back({node, 0});
@@ -1025,30 +995,6 @@ bool isTMEM(Node *node) {
   return flags & Flags::TMEM;
 }
 
-bool isSFU(Node *node) {
-  auto partition = node->getPartition();
-  auto flags = partition->getFlags();
-  return flags & Flags::SFU;
-}
-
-bool isCostlySFU(Node *node) {
-  auto partition = node->getPartition();
-  auto flags = partition->getFlags();
-  return (flags & Flags::SFU) && partition->getCost() > 256;
-}
-
-bool isSIMT(Node *node) {
-  auto partition = node->getPartition();
-  auto flags = partition->getFlags();
-  return flags & Flags::SIMT;
-}
-
-bool isOnlySIMT(Node *node) {
-  auto partition = node->getPartition();
-  auto flags = partition->getFlags();
-  return flags == Flags::SIMT;
-}
-
 bool isForIterArg(Node *node) {
   if (node->isOp())
     return false;
@@ -1147,24 +1093,24 @@ SmallVector<std::pair<std::string, std::function<bool(Edge)>>> heuristics = {
        return true;
      }},
 
-    // straight sequence of SIMT/NONE ops merges together
+    // straight sequence of NONE ops merges together
     {"sequence",
      [](Edge edge) {
        auto from = edge.getFromNode();
        auto to = edge.getToNode();
        if (from->getNumOutDataEdges() > 1 || to->getNumInDataEdges() > 1)
          return false;
-       return (isNone(from) || isSIMT(from)) && (isNone(to) || isSIMT(to));
+       return isNone(from) && isNone(to);
      }},
 
-    // SIMT/NONE op with a single consumer merges together
+    // NONE op with a single consumer merges together
     {"single_consumer",
      [](Edge edge) {
        auto from = edge.getFromNode();
        auto to = edge.getToNode();
        if (from->getNumOutDataEdges() > 1)
          return false;
-       return (isNone(from) || isSIMT(from)) && (isNone(to) || isSIMT(to));
+       return isNone(from) && isNone(to);
      }},
 
     // TMEM load merges with consumers
@@ -1172,7 +1118,7 @@ SmallVector<std::pair<std::string, std::function<bool(Edge)>>> heuristics = {
      [](Edge edge) {
        auto from = edge.getFromNode();
        auto to = edge.getToNode();
-       return node_isa<ttng::TMEMLoadOp>(from) && (isNone(to) || isSIMT(to));
+       return node_isa<ttng::TMEMLoadOp>(from) && isNone(to);
      }},
 
     // TMEM store op merges with uses
@@ -1180,16 +1126,16 @@ SmallVector<std::pair<std::string, std::function<bool(Edge)>>> heuristics = {
      [](Edge edge) {
        auto from = edge.getFromNode();
        auto to = edge.getToNode();
-       return node_isa<ttng::TMEMStoreOp>(to) && (isNone(from) || isSIMT(from));
+       return node_isa<ttng::TMEMStoreOp>(to) && isNone(from);
      }},
 
-    // NONE/SIMT/TMEM ops preceeding STORE merged together
+    // NONE/TMEM ops preceeding STORE merged together
     {"store",
      [](Edge edge) {
        auto from = edge.getFromNode();
        auto to = edge.getToNode();
-       return from->isOp() && to->isOp() &&
-              (isNone(from) || isSIMT(from) || isTMEM(from)) && isStore(to);
+       return from->isOp() && to->isOp() && (isNone(from) || isTMEM(from)) &&
+              isStore(to);
      }},
 
     // merge connected STORE partitions together
@@ -1208,12 +1154,12 @@ SmallVector<std::pair<std::string, std::function<bool(Edge)>>> heuristics = {
        return isMMA(from) && isMMA(to);
      }},
 
-    // NONE ops following TMEM/SIMT/STORE merged together
+    // NONE ops following TMEM/STORE merged together
     {"none_following",
      [](Edge edge) {
        auto from = edge.getFromNode();
        auto to = edge.getToNode();
-       return (isTMEM(from) || isSIMT(from) || isStore(from)) && isNone(to);
+       return (isTMEM(from) || isStore(from)) && isNone(to);
      }},
 
     // NONE group followed by STORE should merge
@@ -1248,160 +1194,6 @@ SmallVector<std::pair<std::string, std::function<bool(Edge)>>> heuristics = {
        return isNone(from) && isTMEM(to);
      }},
 
-    // // merge SIMT partition into following partition, if the SIMT ops
-    // // do not compute the LHS operand of an mma
-    // {"simt_partition_mma_lhs_only",
-    //  [](Edge edge) {
-    //    auto from = edge.getFromNode();
-    //    auto to = edge.getToNode();
-    //    if (!isOnlySIMT(from))
-    //      return false;
-    //    if (isOnlySIMT(from) && !isMMA(to))
-    //      // merge if simt -> non-mma partition
-    //      return true;
-    //    // have a simt -> mma
-    //    // check the edge goes to the lhs operand of an mma op
-    //    if (!to->isOp())
-    //      return true;
-    //    auto op = to->getOp();
-    //    if (isa<ttg::MemDescTransOp>(op)) {
-    //      // allow transpose between simt op and mma
-    //      auto edges = to->getOutEdges();
-    //      if (edges.size() != 1)
-    //        return true;
-    //      edge = edges.front();
-    //      to = edge.getToNode();
-    //      if (!to->isOp())
-    //        return true;
-    //      op = to->getOp();
-    //    }
-    //    if (!isa<ttng::MMAv5OpInterface>(op))
-    //      return true;
-    //    if (edge.getToIdx() != 0)
-    //      return true;
-    //    // have simt -> mma lhs operand, don't merge the partitions
-    //    return false;
-    //  }},
-
-    // // if stmt result placed in same partition as op that produces
-    // // its value, preferentially from the noop branch, otherwise the then
-    // // branch
-    // {"if_result",
-    //  [](Edge edge) {
-    //    auto from = edge.getFromNode();
-    //    auto to = edge.getToNode();
-    //    if (!isIfResult(to))
-    //      return false;
-    //    if (edge.getToIdx() ==
-    //        1) // FIXME: hack to make it work for flattened matmul, fix this
-    //      return true;
-    //    return false;
-    //  }},
-    //
-    // // merge connected SFU partitions together
-    // {"sfu",
-    //  [](Edge edge) {
-    //    auto from = edge.getFromNode();
-    //    auto to = edge.getToNode();
-    //    return isSFU(from) && isSFU(to);
-    //  }},
-    //
-    // // partitions entirely outside of a loop nest merge into partition in the
-    // // loop nest
-    // // e.g. store partition that appears outside of the loop
-    // // Don't merge into MMA partition (with a single warp)
-    // {"non_loop_partitions",
-    //  [](Edge edge) {
-    //    auto from = edge.getFromNode();
-    //    if (isMMA(from))
-    //      return false;
-    //    auto to = edge.getToNode();
-    //    if (!to->isOp())
-    //      return false;
-    //    // exit if any nodes in the partition are in a for loop
-    //    for (auto node : to->getPartition()->getNodes()) {
-    //      if (!node->isOp())
-    //        continue;
-    //      if (node->getOp()->getParentOfType<scf::ForOp>())
-    //        return false;
-    //    }
-    //    // at this point, none of the ops in the partition are inside a loop
-    //    return true;
-    //  }},
-    //
-    // // NONE ops and LOAD merged together
-    // {"load_none",
-    //  [](Edge edge) {
-    //    auto from = edge.getFromNode();
-    //    auto to = edge.getToNode();
-    //    return (isLoad(from) && isNone(to)) || (isNone(from) && isLoad(to));
-    //  }},
-    //
-    // // NONE ops and MMA merged together
-    // {"mma_none",
-    //  [](Edge edge) {
-    //    auto from = edge.getFromNode();
-    //    auto to = edge.getToNode();
-    //    return (isMMA(from) && isNone(to)) || (isNone(from) && isMMA(to));
-    //  }},
-    //
-    // // NONE ops and STORE merged together
-    // {"store_none",
-    //  [](Edge edge) {
-    //    auto from = edge.getFromNode();
-    //    auto to = edge.getToNode();
-    //    return (isStore(from) && isNone(to)) || (isNone(from) && isStore(to));
-    //  }},
-    //
-    // // NONE ops and SFU merged together
-    // {"sfu_none",
-    //  [](Edge edge) {
-    //    auto from = edge.getFromNode();
-    //    auto to = edge.getToNode();
-    //    return (isSFU(from) && isNone(to)) || (isNone(from) && isSFU(to));
-    //  }},
-    //
-    // // SFU ops and STORE merged together
-    // {"sfu_none",
-    //  [](Edge edge) {
-    //    auto from = edge.getFromNode();
-    //    auto to = edge.getToNode();
-    //    return isSFU(from) && isStore(to);
-    //  }},
-    //
-    // // NONE ops and SIMT merged together
-    // {"simt_none",
-    //  [](Edge edge) {
-    //    auto from = edge.getFromNode();
-    //    auto to = edge.getToNode();
-    //    return (isSIMT(from) && isNone(to)) || (isNone(from) && isSIMT(to));
-    //  }},
-    //
-    // // High cost FSU merged with SIMT ops
-    // // {"sfu_costly_simt",
-    // //  [](Edge edge) {
-    // //    auto from = edge.getFromNode();
-    // //    auto to = edge.getToNode();
-    // //    return isCostlySFU(from) && isSIMT(to);
-    // //  }},
-    //
-    // // NONE ops and MANUAL merged together
-    // {"manual_none",
-    //  [](Edge edge) {
-    //    auto from = edge.getFromNode();
-    //    auto to = edge.getToNode();
-    //    return (isOnlyNone(from) && isManual(to)) ||
-    //           (isManual(from) && isOnlyNone(to));
-    //  }},
-    //
-    // // remaining NONE ops merged together
-    // {"none",
-    //  [](Edge edge) {
-    //    auto from = edge.getFromNode();
-    //    auto to = edge.getToNode();
-    //    return isNone(from) && isNone(to);
-    //  }},
-
 };
 
 SmallVector<std::pair<std::string, std::function<bool(Edge)>>> constraints = {
@@ -1413,7 +1205,7 @@ SmallVector<std::pair<std::string, std::function<bool(Edge)>>> constraints = {
        return !(isManual(from) && isManual(to));
      }},
 
-    // don't merge partitions with tmem load/store with mma partitions
+    // don't merge partitions with tmem ops into mma partitions
     {"tmem_mma",
      [](Edge edge) {
        auto from = edge.getFromNode();
@@ -1421,51 +1213,14 @@ SmallVector<std::pair<std::string, std::function<bool(Edge)>>> constraints = {
        return !((isMMA(from) && isTMEM(to)) || (isMMA(to) && isTMEM(from)));
      }},
 
-    // // don't merge tmem load into mma partition
-    // // unless epilogues are disabled
-    // {"tmem_load",
-    //  [](Edge edge) {
-    //    const auto &options = get_options();
-    //    if (options.disable_epilogue && !options.manual)
-    //      return true;
-    //    auto from = edge.getFromNode();
-    //    auto to = edge.getToNode();
-    //    return !((isMMA(from) && node_isa<ttng::TMEMLoadOp>(to)) ||
-    //             (isMMA(to) && node_isa<ttng::TMEMLoadOp>(from)));
-    //  }},
-    //
-    // // don't merge tmem store into mma partition
-    // // unless epilogues are disabled
-    // {"tmem_store",
-    //  [](Edge edge) {
-    //    const auto &options = get_options();
-    //    if (options.disable_epilogue && !options.manual)
-    //      return true;
-    //    auto from = edge.getFromNode();
-    //    auto to = edge.getToNode();
-    //    return !((isMMA(to) && node_isa<ttng::TMEMStoreOp>(from)) ||
-    //             (isMMA(from) && node_isa<ttng::TMEMStoreOp>(to)));
-    //  }},
-
     // don't merge tmem alloc (non-token form) into mma partition
-    // unless epilogues are disabled
     {"tmem_alloc",
      [](Edge edge) {
        const auto &options = get_options();
-       if (options.disable_epilogue && !options.manual)
-         return true;
        auto from = edge.getFromNode();
        auto to = edge.getToNode();
        return !(node_isa<ttng::TMEMAllocOp>(from) && isMMA(to));
      }},
-
-    // // don't merge local load into mma partition
-    // {"local_load",
-    //  [](Edge edge) {
-    //    auto from = edge.getFromNode();
-    //    auto to = edge.getToNode();
-    //    return !(isMMA(from) && node_isa<ttg::LocalLoadOp>(to));
-    //  }},
 };
 
 bool isCritical(Partition *partition) {
@@ -1561,7 +1316,6 @@ DenseSet<Operation *> getTMEMAllocs(Partition *partition) {
 SmallVector<
     std::pair<std::string, std::function<bool(Partition *, Partition *)>>>
     partition_heuristics = {
-
         // merge TMEM partitions together, if they use the same tmem alloc
         // and that alloc is used in more than 2 partitions
         // as aref does not support tmem with more than 2 partitions
@@ -1588,40 +1342,6 @@ SmallVector<
              return false;
            return true;
          }},
-
-        // // merge load partitions that are consumed by the same partition
-        // {"load_partitions_with_same_consumer",
-        //  [](Partition *a, Partition *b) {
-        //    auto a_is_load = (a->getFlags() & Flags::LOAD &&
-        //                      !(a->getFlags() & Flags::MANUAL));
-        //    auto b_is_load = (b->getFlags() & Flags::LOAD &&
-        //                      !(b->getFlags() & Flags::MANUAL));
-        //    if (!a_is_load || !b_is_load)
-        //      return false;
-        //
-        //    auto a_consuming_partitions = getConsumingPartitions(a);
-        //    auto b_consuming_partitions = getConsumingPartitions(b);
-        //    for (auto ag : a_consuming_partitions)
-        //      for (auto bg : b_consuming_partitions)
-        //        if (ag == bg)
-        //          return true;
-        //    return false;
-        //  }},
-        //
-        // // vertically merge load partitions
-        // // partitions that are reachable from one another are merged into the
-        // // same partition
-        // {"load_partitions_vertical",
-        //  [](Partition *a, Partition *b) {
-        //    auto a_is_load = (a->getFlags() & Flags::LOAD &&
-        //                      !(a->getFlags() & Flags::MANUAL));
-        //    auto b_is_load = (b->getFlags() & Flags::LOAD &&
-        //                      !(b->getFlags() & Flags::MANUAL));
-        //    if (!a_is_load || !b_is_load)
-        //      return false;
-        //
-        //    return getReachablePartitions(a).contains(b);
-        //  }},
 
         // merge mma partitions
         {"mma_partitions_horizontal",
@@ -1650,25 +1370,6 @@ SmallVector<
            auto b_is_store = (b->getFlags() == Flags::LOAD);
            return a_is_store && b_is_store;
          }},
-
-        // // merge simt partitions if one of them is not on critical path to
-        // an
-        // mma
-        // {"non_critical_simt",
-        //  [](Partition *a, Partition *b) {
-        //    auto a_is_simt = (a->getFlags() & Flags::SIMT &&
-        //                      !(a->getFlags() & Flags::MANUAL));
-        //    auto b_is_simt = (b->getFlags() & Flags::SIMT &&
-        //                      !(b->getFlags() & Flags::MANUAL));
-        //    // TODO: follow edges to check the partition does not lead to an
-        //    mma
-        //    // within the loop
-        //
-        //    auto a_is_crit = isCritical(a);
-        //    auto b_is_crit = isCritical(b);
-        //
-        //    return a_is_simt && b_is_simt && (a_is_crit ^ b_is_crit);
-        //  }},
 };
 
 void mergePartitions(Graph *graph, std::string funcName,
@@ -2531,16 +2232,6 @@ private:
         tools::getBoolEnv("TRITON_PARTITION_SCHEDULING_DUMP_DATA_ONLY");
     options.dump_loop_only =
         tools::getBoolEnv("TRITON_PARTITION_SCHEDULING_DUMP_LOOP_ONLY");
-    options.disable_simt =
-        tools::getBoolEnv("TRITON_PARTITION_SCHEDULING_DISABLE_SIMT_GROUPS");
-    options.disable_epilogue = tools::getBoolEnv(
-        "TRITON_PARTITION_SCHEDULING_DISABLE_EPILOGUE_GROUPS");
-
-    // FIXME: hack for one of the matmul test cases
-    // if (hasFlattenedEpilogue(op) && ttg::lookupNumWarps(op) > 6) {
-    //   options.disable_simt = true;
-    //   options.disable_epilogue = true;
-    // }
 
     auto graph = buildGraph(op);
     auto initValues = initialDataValues(graph.get());
