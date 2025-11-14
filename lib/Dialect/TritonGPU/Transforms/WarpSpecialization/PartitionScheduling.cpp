@@ -2182,6 +2182,13 @@ void serialize(size_t idx, Operation *region, Graph *graph) {
   graph->walk([&](Node *node) {
     if (node->isOp()) {
       setPartitionsAttr(node->getOp(), node);
+
+      if (auto ret = dyn_cast<tt::ReduceReturnOp>(node->getOp())) {
+        // result of a reduce
+        auto reduce = node->getParent()->getOp();
+        setPartitionOutputsAttr(reduce, 0, 1, node);
+      }
+
     } else {
       auto value = node->getValue();
       if (auto blockArg = dyn_cast<BlockArgument>(value)) {
