@@ -1313,6 +1313,15 @@ SmallVector<std::pair<std::string, std::function<bool(Edge)>>> heuristics = {
        return isOnlyNone(from) && isOnlyNone(to);
      }},
 
+    // merge connected partitions together if edge between is expensive
+    {"connected",
+     [](Edge edge) {
+       auto from = edge.getFromNode();
+       auto to = edge.getToNode();
+       return !isLoad(from) && !isLoad(to) && !isMMA(from) && !isMMA(to) &&
+              edge.getSize() > 8192; // FIXME: seemingly arbitrary size...
+     }},
+
     // // merge connected MMA partitions together
     // {"connected_mma",
     //  [](Edge edge) {
