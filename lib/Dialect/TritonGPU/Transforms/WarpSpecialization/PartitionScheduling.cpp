@@ -1314,6 +1314,8 @@ SmallVector<std::pair<std::string, std::function<bool(Edge)>>> heuristics = {
      }},
 
     // merge connected partitions together if edge between is expensive
+    // TODO: this might be better expressed as a horizontal rule,
+    // that aims to keep shmem usage under the limit
     {"connected",
      [](Edge edge) {
        auto from = edge.getFromNode();
