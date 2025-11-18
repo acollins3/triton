@@ -2384,7 +2384,6 @@ void assignDefaultPartitions(Graph *graph) {
       defaultPartition = partition.get();
     }
   }
-  assert(defaultPartition != nullptr);
   graph->walk([&](Node *node) {
     if (node->getPartitions().empty()) {
       bool done = false;
@@ -2401,6 +2400,7 @@ void assignDefaultPartitions(Graph *graph) {
         }
       }
       if (!done) {
+        assert(defaultPartition != nullptr);
         node->setPartition(defaultPartition);
       }
     }
