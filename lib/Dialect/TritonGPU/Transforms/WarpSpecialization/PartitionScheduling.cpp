@@ -135,15 +135,27 @@ size_t computeCost(Operation *op) {
     return cycles;
   }
 
-  if (auto exp2 = dyn_cast<math::Exp2Op>(op)) {
-    auto inp = exp2.getOperand();
-    auto shape = cast<TensorType>(inp.getType()).getShape();
-    size_t size = 1;
-    for (auto x : shape)
-      size *= x;
-    auto cycles = size / 16;
-    return cycles;
+  if (isa<math::Exp2Op, ElementwiseInlineAsmOp>(op)) {
+    int elementCount = 0;
+    for (Type type : op->getResultTypes()) {
+      if (auto tensorTy = dyn_cast<RankedTensorType>(type))
+        elementCount += tensorTy.getNumElements();
+    }
+    return elementCount;
+    // if (elementCount > 256) {
+    //   setPartition(&op, defaultPartition);
+    //   scheduleDependencies(loop, partitions, defaultPartition, &op);
+    // }
   }
+
+  // auto inp = exp2.getOperand();
+  // auto shape = cast<TensorType>(inp.getType()).getShape();
+  // size_t size = 1;
+  // for (auto x : shape)
+  //   size *= x;
+  // auto cycles = size / 16;
+  // return cycles;
+  //}
 
   return 0;
 }
@@ -1207,6 +1219,15 @@ SmallVector<std::pair<std::string, std::function<bool(Edge)>>> heuristics = {
        return true;
      }},
 
+    // merge expensive SFU ops with their dependencies (except MMA, STORE and
+    // other SFU)
+    {"sfu_consumer",
+     [](Edge edge) {
+       auto from = edge.getFromNode();
+       auto to = edge.getToNode();
+       return isCostlySFU(to) && !isMMA(from) && !isLoad(from) && !isSFU(from);
+     }},
+
     // straight sequence of NONE ops merges together
     {"sequence",
      [](Edge edge) {
@@ -1227,12 +1248,13 @@ SmallVector<std::pair<std::string, std::function<bool(Edge)>>> heuristics = {
        return isNone(from) && isSFU(to);
      }},
 
-    // NONE merges with consumer (except LOAD or MMA)
+    // NONE/cheap SFU merges with consumer (except LOAD, MMA or costly SFU)
     {"none_consumer",
      [](Edge edge) {
        auto from = edge.getFromNode();
        auto to = edge.getToNode();
-       return isNone(from) && !isNone(to) && !isMMA(to) && !isLoad(to);
+       return (isNone(from) || (isSFU(from) && !isCostlySFU(from))) &&
+              !isNone(to) && !isMMA(to) && !isLoad(to) && !isCostlySFU(to);
      }},
 
     // NONE op with a single consumer merges together
