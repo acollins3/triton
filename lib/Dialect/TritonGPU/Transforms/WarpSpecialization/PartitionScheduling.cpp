@@ -2239,7 +2239,10 @@ void serialize(size_t idx, Operation *region, Graph *graph) {
   for (auto &partition : graph->getPartitions()) {
     if (partition->empty())
       continue;
-    stages.push_back(b.getI32IntegerAttr(partition->getStage()));
+    auto id = *partition->id;
+    while (id >= stages.size())
+      stages.push_back(b.getI32IntegerAttr(0));
+    stages[id] = b.getI32IntegerAttr(partition->getStage());
   }
   region->setAttr(kPartitionStagesAttrName, b.getArrayAttr(stages));
 }
