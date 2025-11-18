@@ -2361,6 +2361,9 @@ void assignPartitionIds(Graph *graph) {
     partition->id = idx;
     idx++;
   }
+  // ensure MMA and LOAD partitions are never the same as the default partition
+  if (idx == 0)
+    idx++;
   for (auto partition : mma_partitions) {
     partition->id = idx;
     idx++;
