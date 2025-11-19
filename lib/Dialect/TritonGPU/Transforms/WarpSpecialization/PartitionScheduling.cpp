@@ -584,6 +584,11 @@ bool isAsyncLoad(Node *node) {
   return false;
 }
 
+bool isViewOp(Operation *op) {
+  return isa<tt::BroadcastOp, tt::ExpandDimsOp, ttg::ConvertLayoutOp>(op) ||
+         op->hasTrait<OpTrait::MemDescViewTrait>();
+}
+
 Flags getNodeFlags(Node *node) {
   if (node->isOp()) {
     auto op = node->getOp();
@@ -604,8 +609,7 @@ Flags getNodeFlags(Node *node) {
       return Flags::TMEM;
     if (isa<math::Exp2Op>(op))
       return Flags::SFU;
-    if (isa<tt::BroadcastOp, tt::ExpandDimsOp, ttg::ConvertLayoutOp>(op) ||
-        op->hasTrait<OpTrait::MemDescViewTrait>())
+    if (isViewOp(op))
       return Flags::VIEW;
   }
   return Flags::NONE;
@@ -2296,8 +2300,7 @@ duplicateViewOps(Operation *region) {
   SmallVector<mlir::Operation *> viewOps;
 
   region->walk([&](mlir::Operation *op) {
-    if (isa<tt::BroadcastOp, tt::ExpandDimsOp>(op) ||
-        op->hasTrait<OpTrait::MemDescViewTrait>())
+    if (isViewOp(op))
       viewOps.push_back(op);
   });
 
