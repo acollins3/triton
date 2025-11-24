@@ -13,6 +13,7 @@
 
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <sstream>
 
 namespace mlir::triton::gpu {
@@ -1954,6 +1955,107 @@ void propagatePartitions(Graph *graph, std::string funcName,
   }
 }
 
+void duplicateCheapOps(Graph *graph, std::string funcName,
+                       VisualizationInfo &vis_info) {
+  auto &options = get_options();
+
+  if (options.dump_dot)
+    visualize(funcName, "duplicate", "before duplicate cheap ops", graph,
+              vis_info);
+
+  // for each partition:
+  // look at all crossing edges leaving the partition
+  // do a depth first search through NONE nodes, if we hit the same partition
+  // assign all nodes on that path to the partition
+  for (auto &partition : graph->getPartitions()) {
+
+    auto crossingEdges = getOutCrossingEdges(partition.get());
+
+    for (auto edge : crossingEdges) {
+      // only handle start nodes with a single partition
+      if (edge.getFromNode()->getPartitions().size() != 1)
+        continue;
+      auto startPartition = edge.getFromNode()->getPartition();
+
+      // only handle nodes with a single partition
+      auto start = edge.getToNode();
+      if (start->getPartitions().size() != 1)
+        continue;
+      auto partition = start->getPartition();
+
+      auto isCandidate = [](Node *node) {
+        // FIXME: ignore costly SFU
+        return (getNodeFlags(node) == Flags::NONE ||
+                getNodeFlags(node) == Flags::SFU);
+      };
+
+      if (!isCandidate(edge.getToNode())) {
+        continue;
+      }
+
+      llvm::errs() << "\n\ntry\n";
+      edge.getFromNode()->dump();
+      edge.getToNode()->dump();
+
+      auto update = [&]() {
+        std::map<Node *, Node *> parentMap;
+
+        SmallVector<Node *> stack;
+        stack.push_back(start);
+        DenseSet<Node *> seen;
+
+        while (!stack.empty()) {
+          auto node = stack.back();
+          llvm::dbgs() << "visit\n";
+          node->dump();
+          stack.pop_back();
+          if (!seen.contains(node)) {
+            seen.insert(node);
+            for (auto edge : node->getOutEdges()) {
+              auto child = edge.getToNode();
+              if (!seen.contains(child)) {
+                llvm::dbgs() << "child\n";
+                child->dump();
+                if (child->getPartitions().size() != 1 || !isCandidate(child)) {
+                  llvm::dbgs() << "no match, ignore path\n";
+                } else if (child->getPartition() == partition) {
+                  llvm::dbgs() << "same partition, follow...\n";
+                  parentMap.emplace(child, node);
+                  stack.push_back(child);
+                } else if (child->getPartition() == startPartition) {
+                  llvm::dbgs() << "HIT!\n";
+                  // found a path, set all nodes on the path to the partition
+                  llvm::dbgs() << "set partition\n";
+                  node->addPartition(startPartition);
+                  node->dump();
+                  while (parentMap.find(node) != parentMap.end()) {
+                    node = parentMap[node];
+                    node->addPartition(startPartition);
+                    node->dump();
+                  }
+
+                  if (options.dump_dot)
+                    visualize(funcName, "duplicate", "duplicate cheap ops",
+                              graph, vis_info);
+
+                  return;
+                } else {
+                  llvm::dbgs() << "no match, ignore path\n";
+                }
+              }
+            }
+          }
+        }
+      };
+      update();
+    }
+  }
+
+  if (options.dump_dot)
+    visualize(funcName, "duplicate", "duplicate cheap ops done", graph,
+              vis_info);
+}
+
 void visualize(std::string key, std::string filename, std::string title,
                Graph *graph, VisualizationInfo &info) {
 
@@ -2389,7 +2491,8 @@ void assignPartitionIds(Graph *graph) {
     partition->id = idx;
     idx++;
   }
-  // ensure MMA and LOAD partitions are never the same as the default partition
+  // ensure MMA and LOAD partitions are never the same as the default
+  // partition
   if (idx == 0)
     idx++;
   for (auto partition : mma_partitions) {
@@ -2519,6 +2622,14 @@ private:
     if (options.dump_dot)
       visualize(key, "assign-default", "assign default", graph.get(), vis_info);
     propagatePartitions(graph.get(), key, vis_info);
+    if (options.dump_dot)
+      visualize(key, "propagate", "propagated", graph.get(), vis_info);
+
+    // FIXME: optimization - looks for paths of NONE ops, from one partition,
+    // through another partition, and back to the same partition. Duplicate
+    // these to avoid the copying involved (i.e. assign to both partitions)
+    duplicateCheapOps(graph.get(), key, vis_info);
+
     if (options.dump_dot)
       visualize(key, "final", "final", graph.get(), vis_info);
 
