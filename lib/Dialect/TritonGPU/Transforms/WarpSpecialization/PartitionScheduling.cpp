@@ -13,7 +13,6 @@
 
 #include <fstream>
 #include <iomanip>
-#include <iostream>
 #include <sstream>
 
 namespace mlir::triton::gpu {
@@ -1993,9 +1992,9 @@ void duplicateCheapOps(Graph *graph, std::string funcName,
         continue;
       }
 
-      llvm::errs() << "\n\ntry\n";
-      edge.getFromNode()->dump();
-      edge.getToNode()->dump();
+      // llvm::errs() << "\n\ntry\n";
+      // edge.getFromNode()->dump();
+      // edge.getToNode()->dump();
 
       auto update = [&]() {
         std::map<Node *, Node *> parentMap;
@@ -2006,32 +2005,32 @@ void duplicateCheapOps(Graph *graph, std::string funcName,
 
         while (!stack.empty()) {
           auto node = stack.back();
-          llvm::dbgs() << "visit\n";
-          node->dump();
+          // llvm::dbgs() << "visit\n";
+          // node->dump();
           stack.pop_back();
           if (!seen.contains(node)) {
             seen.insert(node);
             for (auto edge : node->getOutEdges()) {
               auto child = edge.getToNode();
               if (!seen.contains(child)) {
-                llvm::dbgs() << "child\n";
-                child->dump();
+                // llvm::dbgs() << "child\n";
+                // child->dump();
                 if (child->getPartitions().size() != 1 || !isCandidate(child)) {
-                  llvm::dbgs() << "no match, ignore path\n";
+                  // llvm::dbgs() << "no match, ignore path\n";
                 } else if (child->getPartition() == partition) {
-                  llvm::dbgs() << "same partition, follow...\n";
+                  // llvm::dbgs() << "same partition, follow...\n";
                   parentMap.emplace(child, node);
                   stack.push_back(child);
                 } else if (child->getPartition() == startPartition) {
-                  llvm::dbgs() << "HIT!\n";
+                  // llvm::dbgs() << "HIT!\n";
                   // found a path, set all nodes on the path to the partition
-                  llvm::dbgs() << "set partition\n";
+                  // llvm::dbgs() << "set partition\n";
                   node->addPartition(startPartition);
-                  node->dump();
+                  // node->dump();
                   while (parentMap.find(node) != parentMap.end()) {
                     node = parentMap[node];
                     node->addPartition(startPartition);
-                    node->dump();
+                    // node->dump();
                   }
 
                   if (options.dump_dot)
@@ -2040,7 +2039,7 @@ void duplicateCheapOps(Graph *graph, std::string funcName,
 
                   return;
                 } else {
-                  llvm::dbgs() << "no match, ignore path\n";
+                  // llvm::dbgs() << "no match, ignore path\n";
                 }
               }
             }
